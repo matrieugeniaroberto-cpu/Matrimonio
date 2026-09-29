@@ -327,7 +327,7 @@ export default function WeddingPlanner() {
   function handlePhoto(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    compressImage(file).then((dataUrl) => setCouple((c) => ({ ...c, photo: dataUrl }))).catch(() => alert("No se pudo procesar esa imagen."));
+    compressImage(file).then((dataUrl) => setCouple((c) => ({ ...c, photo: dataUrl, photoPos: undefined }))).catch(() => alert("No se pudo procesar esa imagen."));
   }
 
   function exportData() {
@@ -375,7 +375,7 @@ export default function WeddingPlanner() {
       <aside className="w-60 shrink-0 p-5 flex flex-col gap-1 overflow-y-auto" style={{ borderRight: `1px solid ${T.line}` }}>
         <div className="flex items-center gap-3 mb-2">
           <div className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center shrink-0" style={{ background: T.soft, border: `2px solid ${T.primary}` }}>
-            {couple.photo ? <img src={couple.photo} alt="" className="w-full h-full object-cover" /> : <Camera size={18} color={T.primaryDark} />}
+            {couple.photo ? <img src={couple.photo} alt="" className="w-full h-full object-cover" style={{ objectPosition: couple.photoPos || "50% 50%" }} /> : <Camera size={18} color={T.primaryDark} />}
           </div>
           <div style={{ fontFamily: "Georgia, serif" }} className="text-lg leading-tight">
             {couple.a} <span style={{ color: T.primary }}>&</span> {couple.b}
@@ -407,7 +407,7 @@ export default function WeddingPlanner() {
         )}
 
         {tab === "overview" && (
-          <Overview T={T} couple={couple} events={events} guests={guests} todos={todos} budget={budget}
+          <Overview T={T} couple={couple} setCouple={setCouple} events={events} guests={guests} todos={todos} budget={budget}
             suppliers={suppliers} schedules={schedules} fileRef={fileRef} handlePhoto={handlePhoto} setTab={setTab}
             activeEvent={activeEvent} openTasks={openTasks} overdueTasks={overdueTasks} pendingRsvp={pendingRsvp}
             unpaidSuppliers={unpaidSuppliers} scheme={schemes.find((s) => s.id === activeScheme)} engagementDate={engagementDate} />
@@ -500,10 +500,38 @@ function EventSwitcher({ T, events, activeEvent, setActiveEvent }) {
     </div>
   );
 }
+// Foto con encuadre ajustable: cuando editing=true se arrastra para elegir qué parte se ve.
+// La posición se guarda como "x% y%" (object-position) y solo se confirma al soltar.
+function PositionedPhoto({ src, pos, onChange, editing, className = "", style }) {
+  const [live, setLive] = useState(null);
+  const drag = useRef(null);
+  const [x, y] = String(live || pos || "50% 50%").split(" ").map((v) => parseFloat(v));
+  function down(e) {
+    if (!editing) return;
+    e.preventDefault(); e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const r = e.currentTarget.getBoundingClientRect();
+    drag.current = { sx: e.clientX, sy: e.clientY, x, y, w: r.width, h: r.height };
+  }
+  function move(e) {
+    const d = drag.current;
+    if (!d) return;
+    const clamp = (n) => Math.max(0, Math.min(100, n));
+    setLive(`${clamp(d.x - ((e.clientX - d.sx) / d.w) * 150).toFixed(1)}% ${clamp(d.y - ((e.clientY - d.sy) / d.h) * 150).toFixed(1)}%`);
+  }
+  function up() { if (drag.current && live) onChange?.(live); drag.current = null; setLive(null); }
+  return (
+    <img src={src} alt="" draggable={false} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+      className={`object-cover ${className}`} style={{ objectPosition: `${x}% ${y}%`, cursor: editing ? "grab" : undefined, touchAction: editing ? "none" : undefined, userSelect: "none", ...style }} />
+  );
+}
+const photoSrc = (p) => (typeof p === "string" ? p : p?.src);
+const photoPos = (p) => (typeof p === "string" ? undefined : p?.pos);
+
 function pickEvent(activeEvent, events) { return activeEvent === "all" ? events[0]?.id : activeEvent; }
 
 /* ============================== Overview ============================== */
-function Overview({ T, couple, events, guests, todos, budget, suppliers, schedules, fileRef, handlePhoto, setTab, activeEvent, openTasks, overdueTasks, pendingRsvp, unpaidSuppliers, scheme, engagementDate }) {
+function Overview({ T, couple, setCouple, events, guests, todos, budget, suppliers, schedules, fileRef, handlePhoto, setTab, activeEvent, openTasks, overdueTasks, pendingRsvp, unpaidSuppliers, scheme, engagementDate }) {
   const evFilter = activeEvent === "all" ? null : activeEvent;
   const scopedGuests = evFilter ? guests.filter((g) => g.eventIds.includes(evFilter)) : guests;
   const scopedBudget = evFilter ? budget.filter((b) => b.eventId === evFilter || b.eventId === "shared") : budget;
@@ -516,6 +544,7 @@ function Overview({ T, couple, events, guests, todos, budget, suppliers, schedul
   const supPct = suppliers.length ? Math.round((bookedSuppliers / suppliers.length) * 100) : 0;
   const nextEvent = events.filter((e) => e.date).sort((a, b) => a.date.localeCompare(b.date))[0];
   const dEngaged = daysUntil(engagementDate);
+  const [framing, setFraming] = useState(false);
 
   const upcoming = Object.entries(schedules).flatMap(([evId, items]) => (items || []).map((it) => ({ ...it, evId })))
     .filter((it) => !evFilter || it.evId === evFilter).sort((a, b) => (a.start || "").localeCompare(b.start || "")).slice(0, 4);
@@ -523,18 +552,26 @@ function Overview({ T, couple, events, guests, todos, budget, suppliers, schedul
   return (
     <div>
       <div className="relative rounded-3xl overflow-hidden mb-8 flex items-end" style={{ height: 260, background: `linear-gradient(135deg, ${T.soft}, ${T.cardAlt})` }}>
-        {couple.photo && <img src={couple.photo} alt="" className="absolute inset-0 w-full h-full object-cover" />}
-        <div className="absolute inset-0" style={{ background: couple.photo ? "linear-gradient(0deg, rgba(10,8,9,0.82), rgba(10,8,9,0.05))" : "none" }} />
-        <div className="relative z-10 p-6 flex items-end justify-between w-full">
+        {couple.photo && <PositionedPhoto src={couple.photo} pos={couple.photoPos} editing={framing} onChange={(p) => setCouple((c) => ({ ...c, photoPos: p }))} className="absolute inset-0 w-full h-full" style={{ zIndex: framing ? 20 : 0 }} />}
+        <div className="absolute inset-0 pointer-events-none" style={{ background: couple.photo && !framing ? "linear-gradient(0deg, rgba(10,8,9,0.82), rgba(10,8,9,0.05))" : "none" }} />
+        {framing && <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 text-xs px-3 py-1.5 rounded-full pointer-events-none" style={{ background: "rgba(0,0,0,0.6)", color: "#fff" }}>Arrastra la foto para encuadrarla</div>}
+        <div className="relative z-30 p-6 flex items-end justify-between w-full pointer-events-none">
           <div>
             <div style={{ fontFamily: "Georgia, serif", color: couple.photo ? "#fff" : T.text }} className="text-4xl">{couple.a} & {couple.b}</div>
             <div className="text-sm mt-1" style={{ color: couple.photo ? "#F1E6D6" : T.muted }}>
               {engagementDate ? `Comprometidos hace ${Math.max(dEngaged * -1, 0)} días` : "Dos celebraciones, una sola historia"}
             </div>
           </div>
-          <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium" style={{ background: "rgba(255,255,255,0.92)", color: "#3B2A20" }}>
-            <Camera size={15} /> {couple.photo ? "Cambiar foto" : "Subir foto"}
-          </button>
+          <div className="flex gap-2 pointer-events-auto">
+            {couple.photo && (
+              <button onClick={() => setFraming((v) => !v)} className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium" style={{ background: framing ? T.primary : "rgba(255,255,255,0.92)", color: framing ? "#fff" : "#3B2A20" }}>
+                {framing ? <><Check size={15} /> Listo</> : <><Pencil size={15} /> Ajustar encuadre</>}
+              </button>
+            )}
+            <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium" style={{ background: "rgba(255,255,255,0.92)", color: "#3B2A20" }}>
+              <Camera size={15} /> {couple.photo ? "Cambiar foto" : "Subir foto"}
+            </button>
+          </div>
           <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handlePhoto} />
         </div>
       </div>
@@ -1113,7 +1150,7 @@ function Venues({ T, venues, setVenues, events, guests, couple, setSuppliers }) 
           return (
             <Card T={T} key={v.id} style={{ padding: 0, overflow: "hidden", opacity: v.status === "Descartado" ? 0.6 : 1 }} onClick={() => setForm({ ...v })}>
               <div className="h-40 flex items-center justify-center relative" style={{ background: T.cardAlt }}>
-                {v.photos?.[0] ? <img src={v.photos[0]} alt="" className="w-full h-full object-cover" /> : <Building2 size={32} color={T.muted} />}
+                {v.photos?.[0] ? <PositionedPhoto src={photoSrc(v.photos[0])} pos={photoPos(v.photos[0])} className="w-full h-full" /> : <Building2 size={32} color={T.muted} />}
                 <span className="absolute top-2 left-2 text-xs px-2 py-1 rounded-full" style={{ background: statusColor(v.status), color: "#fff" }}>{v.status}</span>
                 {v.photos?.length > 1 && <span className="absolute bottom-2 right-2 text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(0,0,0,0.55)", color: "#fff" }}>{v.photos.length} fotos</span>}
                 <label onClick={(e) => e.stopPropagation()} className="absolute top-2 right-2 text-xs px-2 py-1 rounded-full flex items-center gap-1 cursor-pointer" style={{ background: compareIds.includes(v.id) ? T.primary : "rgba(255,255,255,0.9)", color: compareIds.includes(v.id) ? "#fff" : "#3B2A20" }}>
@@ -1163,9 +1200,18 @@ function Venues({ T, venues, setVenues, events, guests, couple, setSuppliers }) 
               </div>
               <div className="flex gap-2 flex-wrap">
                 {form.photos.length === 0 && <span className="text-xs" style={{ color: T.muted }}>Sin fotos. La primera será la portada.</span>}
-                {form.photos.map((src, i) => (
+                {form.photos[0] && (
+                  <div className="w-full mb-1">
+                    <div className="h-40 rounded-lg overflow-hidden relative" style={{ border: `1px solid ${T.line}` }}>
+                      <PositionedPhoto editing src={photoSrc(form.photos[0])} pos={photoPos(form.photos[0])} className="w-full h-full"
+                        onChange={(p) => setForm((f) => ({ ...f, photos: [{ src: photoSrc(f.photos[0]), pos: p }, ...f.photos.slice(1)] }))} />
+                      <span className="absolute top-2 left-2 text-xs px-2 py-1 rounded-full pointer-events-none" style={{ background: "rgba(0,0,0,0.55)", color: "#fff" }}>Portada · arrastra para encuadrar</span>
+                    </div>
+                  </div>
+                )}
+                {form.photos.map((p, i) => (
                   <div key={i} className="relative w-28 h-24 rounded-lg overflow-hidden" style={{ border: `1px solid ${T.line}` }}>
-                    <a href={src} target="_blank" rel="noreferrer"><img src={src} alt="" className="w-full h-full object-cover" /></a>
+                    <a href={photoSrc(p)} target="_blank" rel="noreferrer"><PositionedPhoto src={photoSrc(p)} pos={photoPos(p)} className="w-full h-full" /></a>
                     <button onClick={() => setForm((f) => ({ ...f, photos: f.photos.filter((_, j) => j !== i) }))} className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.55)" }}><X size={11} color="#fff" /></button>
                     {i > 0 && <button onClick={() => setForm((f) => ({ ...f, photos: [f.photos[i], ...f.photos.filter((_, j) => j !== i)] }))} className="absolute bottom-1 left-1 text-[10px] px-1.5 rounded" style={{ background: "rgba(0,0,0,0.55)", color: "#fff" }}>Portada</button>}
                   </div>
@@ -1312,7 +1358,7 @@ function VenueCompare({ T, venues, headcount, nameA, nameB, onClose, onRemove })
             {venues.map((v) => (
               <div key={v.id} className="pb-3">
                 <div className="h-28 rounded-lg overflow-hidden flex items-center justify-center mb-2" style={{ background: T.cardAlt }}>
-                  {v.photos?.[0] ? <img src={v.photos[0]} alt="" className="w-full h-full object-cover" /> : <Building2 size={24} color={T.muted} />}
+                  {v.photos?.[0] ? <PositionedPhoto src={photoSrc(v.photos[0])} pos={photoPos(v.photos[0])} className="w-full h-full" /> : <Building2 size={24} color={T.muted} />}
                 </div>
                 <div className="flex items-start justify-between gap-1">
                   <span className="text-sm font-medium">{v.name}</span>
