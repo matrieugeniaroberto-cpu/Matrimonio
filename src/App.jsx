@@ -6,7 +6,8 @@ import {
   Camera, Plus, X, Trash2, Check, ChevronRight, Sun, Moon, AlertCircle,
   CalendarClock, Palette, Utensils, Phone, Mail, Tag, StickyNote,
   Link2, Mic, ImageIcon, PenTool, MapPin, Bell, Settings as SettingsIcon,
-  Mailbox, ExternalLink, Sparkles, Upload, Printer, GripVertical
+  Mailbox, ExternalLink, Sparkles, Upload, Printer, GripVertical,
+  Building2, Star, Scale, Contact, Pencil
 } from "lucide-react";
 
 /* ============================== helpers ============================== */
@@ -205,6 +206,7 @@ export default function WeddingPlanner() {
   const [schedules, setSchedules] = useState({});
   const [scrapbook, setScrapbook] = useState([]);
   const [inspiration, setInspiration] = useState([]);
+  const [venues, setVenues] = useState([]);
   const [invitations, setInvitations] = useState([]);
   const [users, setUsers] = useState(DEFAULT_USERS);
   const [notifPrefs, setNotifPrefs] = useState({ rsvp: true, tasks: true, suppliers: true });
@@ -234,6 +236,7 @@ export default function WeddingPlanner() {
     if (d.schedules) setSchedules(d.schedules);
     if (d.scrapbook) setScrapbook(d.scrapbook);
     if (d.inspiration) setInspiration(d.inspiration);
+    if (d.venues) setVenues(d.venues);
     if (d.invitations) setInvitations(d.invitations);
     if (d.users) setUsers(d.users);
     if (d.notifPrefs) setNotifPrefs(d.notifPrefs);
@@ -244,7 +247,7 @@ export default function WeddingPlanner() {
     if (d.mode) setMode(d.mode);
   }
   function snapshot() {
-    return { couple, engagementDate, events, etapas, groups, guests, todoTags, todos, budgetCats, budget, suppliers, catering, seating, schedules, scrapbook, inspiration, invitations, users, notifPrefs, dismissed, reminders, schemes, activeScheme, mode };
+    return { couple, engagementDate, events, etapas, groups, guests, todoTags, todos, budgetCats, budget, suppliers, catering, seating, schedules, scrapbook, inspiration, venues, invitations, users, notifPrefs, dismissed, reminders, schemes, activeScheme, mode };
   }
 
   // Carga inicial desde Supabase.
@@ -301,7 +304,7 @@ export default function WeddingPlanner() {
     }, 700);
     return () => clearTimeout(saveTimer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, couple, engagementDate, events, etapas, groups, guests, todoTags, todos, budgetCats, budget, suppliers, catering, seating, schedules, scrapbook, inspiration, invitations, users, notifPrefs, dismissed, reminders, schemes, activeScheme, mode]);
+  }, [loaded, couple, engagementDate, events, etapas, groups, guests, todoTags, todos, budgetCats, budget, suppliers, catering, seating, schedules, scrapbook, inspiration, venues, invitations, users, notifPrefs, dismissed, reminders, schemes, activeScheme, mode]);
 
   async function saveNow() {
     setSaveStatus("saving");
@@ -347,6 +350,7 @@ export default function WeddingPlanner() {
     { id: "overview", label: "Resumen", icon: LayoutGrid, scoped: false },
     { id: "guests", label: "Invitados", icon: Users, scoped: true },
     { id: "ceremonies", label: "Eventos", icon: MapPin, scoped: false },
+    { id: "venues", label: "Lugares", icon: Building2, scoped: false },
     { id: "todos", label: "Tareas", icon: CheckSquare, scoped: false },
     { id: "budget", label: "Presupuesto", icon: PieChart, scoped: true },
     { id: "suppliers", label: "Proveedores", icon: Briefcase, scoped: false },
@@ -410,6 +414,7 @@ export default function WeddingPlanner() {
         )}
         {tab === "guests" && <Guests T={T} guests={guests} setGuests={setGuests} events={events} activeEvent={activeEvent} groups={groups} setGroups={setGroups} />}
         {tab === "ceremonies" && <Ceremonies T={T} events={events} setEvents={setEvents} etapas={etapas} setEtapas={setEtapas} guests={guests} budget={budget} todos={todos} setTodos={setTodos} todoTags={todoTags} schedules={schedules} setSchedules={setSchedules} />}
+        {tab === "venues" && <Venues T={T} venues={venues} setVenues={setVenues} events={events} guests={guests} couple={couple} setSuppliers={setSuppliers} />}
         {tab === "todos" && <Todos T={T} todos={todos} setTodos={setTodos} events={events} tags={todoTags} setTags={setTodoTags} couple={couple} />}
         {tab === "budget" && <Budget T={T} budget={budget} setBudget={setBudget} activeEvent={activeEvent} events={events} cats={budgetCats} setCats={setBudgetCats} suppliers={suppliers} />}
         {tab === "suppliers" && <Suppliers T={T} suppliers={suppliers} setSuppliers={setSuppliers} cats={budgetCats} setCats={setBudgetCats} />}
@@ -760,19 +765,45 @@ function Ceremonies({ T, events, setEvents, etapas, setEtapas, guests, budget, t
 }
 
 /* ============================== Guests ============================== */
+// Lee un archivo .vcf (contactos exportados desde iPhone, Mac, Android o Google) y devuelve [{ name, email, phone }].
+function parseVCard(text) {
+  const unfolded = text.replace(/\r\n/g, "\n").replace(/\n[ \t]/g, "");
+  const cards = unfolded.split(/BEGIN:VCARD/i).slice(1);
+  const clean = (v) => v.replace(/\\,/g, ",").replace(/\;/g, ";").replace(/\\n/gi, " ").trim();
+  return cards.map((card) => {
+    let fn = "", n = "", email = "", phone = "";
+    for (const line of card.split("\n")) {
+      const idx = line.indexOf(":");
+      if (idx < 0) continue;
+      const key = line.slice(0, idx).replace(/^item\d+\./i, "").split(";")[0].toUpperCase();
+      const val = line.slice(idx + 1);
+      if (key === "FN" && !fn) fn = clean(val);
+      else if (key === "N" && !n) { const [last, first] = val.split(";"); n = clean(`${first || ""} ${last || ""}`); }
+      else if (key === "EMAIL" && !email) email = clean(val);
+      else if (key === "TEL" && !phone) phone = clean(val);
+    }
+    return { name: fn || n, email, phone };
+  }).filter((c) => c.name);
+}
+
 function Guests({ T, guests, setGuests, events, activeEvent, groups, setGroups }) {
   const [form, setForm] = useState(null);
   const [newGroup, setNewGroup] = useState("");
+  const [manageGroups, setManageGroups] = useState(false);
+  const [contacts, setContacts] = useState(null); // { list, selected: Set, group, query }
   const dragRef = useRef(null);
+  const vcfRef = useRef(null);
   const visible = activeEvent === "all" ? guests : guests.filter((g) => g.eventIds.includes(activeEvent));
   const S = RSVP_STYLES(T);
+  const canPickContacts = typeof navigator !== "undefined" && "contacts" in navigator && "select" in (navigator.contacts || {});
 
-  function startNew() { setForm({ id: uid(), name: "", eventIds: activeEvent === "all" ? [] : [activeEvent], rsvp: "pending", ageGroup: "Adulto", group: groups[0] || "", inviteSent: false, restrictions: "", notes: "", phone: "" }); }
+  function startNew() { setForm({ id: uid(), name: "", eventIds: activeEvent === "all" ? [] : [activeEvent], rsvp: "pending", ageGroup: "Adulto", group: groups[0] || "", inviteSent: false, restrictions: "", notes: "", phone: "", email: "" }); }
   function save() { if (!form.name.trim()) return; setGuests((g) => (g.some((x) => x.id === form.id) ? g.map((x) => (x.id === form.id ? form : x)) : [...g, form])); setForm(null); }
   function importGuests(rows) {
     const mapRsvp = (v) => { const s = String(v || "").toLowerCase(); if (/asiste|confirm|s[ií]/.test(s)) return "attending"; if (/no asiste|declin/.test(s)) return "declined"; return "pending"; };
     const created = rows.map((row) => {
-      const name = pick(row, ["Nombre", "Name"]);
+      // También acepta el CSV que exporta Google Contactos (First Name / Last Name / E-mail 1 - Value / Phone 1 - Value).
+      const name = pick(row, ["Nombre", "Name"]) || [pick(row, ["First Name", "Given Name"]), pick(row, ["Last Name", "Family Name"])].filter(Boolean).join(" ");
       if (!name) return null;
       const evIds = matchEvents(pick(row, ["Evento", "Eventos", "Event"]), events);
       return {
@@ -782,41 +813,87 @@ function Guests({ T, guests, setGuests, events, activeEvent, groups, setGroups }
         inviteSent: truthy(pick(row, ["InvitacionEnviada", "Invitación enviada", "InviteSent"])),
         restrictions: pick(row, ["Restricciones", "Restrictions"]),
         notes: pick(row, ["Notas", "Notes"]),
-        phone: pick(row, ["Telefono", "Teléfono", "Phone"]),
+        phone: pick(row, ["Telefono", "Teléfono", "Phone", "Phone 1 - Value"]),
+        email: pick(row, ["Email", "Correo", "E-mail", "E-mail 1 - Value"]),
         eventIds: evIds.length ? evIds : (activeEvent !== "all" ? [activeEvent] : []),
       };
     }).filter(Boolean);
     if (created.length) setGuests((gs) => [...gs, ...created]);
   }
-  function printGuests() {
-    const rows = visible.map((g) => `<tr><td>${g.name}</td><td>${g.group}</td><td>${g.ageGroup}</td><td>${S[g.rsvp].label}</td><td>${g.inviteSent ? "Sí" : "No"}</td><td>${g.restrictions || ""}</td></tr>`).join("");
-    printHtml("Lista de invitados", `<h1>Lista de invitados</h1><table><tr><th>Nombre</th><th>Grupo</th><th>Edad</th><th>RSVP</th><th>Invitación</th><th>Restricciones</th></tr>${rows}</table>`);
+  function openContactReview(list) {
+    const known = new Set(guests.map((g) => g.name.trim().toLowerCase()));
+    const fresh = list.filter((c) => !known.has(c.name.trim().toLowerCase()));
+    if (!fresh.length) { alert(list.length ? "Todos esos contactos ya están en la lista de invitados." : "No se encontraron contactos."); return; }
+    setContacts({ list: fresh, selected: new Set(fresh.length <= 30 ? fresh.map((_, i) => i) : []), group: groups[0] || "", query: "" });
   }
+  async function pickFromPhone() {
+    try {
+      const res = await navigator.contacts.select(["name", "email", "tel"], { multiple: true });
+      openContactReview(res.map((c) => ({ name: c.name?.[0] || "", email: c.email?.[0] || "", phone: c.tel?.[0] || "" })).filter((c) => c.name));
+    } catch (e) { /* el usuario canceló */ }
+  }
+  async function handleVcf(e) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    openContactReview(parseVCard(await f.text()));
+  }
+  function addSelectedContacts() {
+    const chosen = contacts.list.filter((_, i) => contacts.selected.has(i));
+    const created = chosen.map((c) => ({ id: uid(), name: c.name, email: c.email, phone: c.phone, group: contacts.group, eventIds: activeEvent === "all" ? [] : [activeEvent], rsvp: "pending", ageGroup: "Adulto", inviteSent: false, restrictions: "", notes: "" }));
+    setGuests((gs) => [...gs, ...created]);
+    setContacts(null);
+  }
+  function addGroup() { const g = newGroup.trim(); if (g && !groups.includes(g)) setGroups((gs) => [...gs, g]); setNewGroup(""); }
+  function renameGroup(oldName, name) {
+    const n = name.trim();
+    if (!n || n === oldName || groups.includes(n)) return;
+    setGroups((gs) => gs.map((g) => (g === oldName ? n : g)));
+    setGuests((gs) => gs.map((g) => (g.group === oldName ? { ...g, group: n } : g)));
+  }
+  function deleteGroup(name) {
+    const count = guests.filter((g) => g.group === name).length;
+    if (!window.confirm(count ? `¿Borrar el grupo "${name}"? Sus ${count} invitado(s) quedarán "Sin grupo" (no se borran).` : `¿Borrar el grupo "${name}"?`)) return;
+    setGroups((gs) => gs.filter((g) => g !== name));
+    setGuests((gs) => gs.map((g) => (g.group === name ? { ...g, group: "" } : g)));
+  }
+  function printGuests() {
+    const rows = visible.map((g) => `<tr><td>${g.name}</td><td>${g.group || "Sin grupo"}</td><td>${g.ageGroup}</td><td>${S[g.rsvp].label}</td><td>${g.inviteSent ? "Sí" : "No"}</td><td>${g.phone || ""}</td><td>${g.email || ""}</td><td>${g.restrictions || ""}</td></tr>`).join("");
+    printHtml("Lista de invitados", `<h1>Lista de invitados</h1><table><tr><th>Nombre</th><th>Grupo</th><th>Edad</th><th>RSVP</th><th>Invitación</th><th>Teléfono</th><th>Email</th><th>Restricciones</th></tr>${rows}</table>`);
+  }
+
+  const shownContacts = contacts ? contacts.list.map((c, i) => ({ ...c, i })).filter((c) => !contacts.query || `${c.name} ${c.email} ${c.phone}`.toLowerCase().includes(contacts.query.toLowerCase())) : [];
 
   return (
     <div>
       <SectionTitle T={T} action={
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
           <Button T={T} small variant="outline" onClick={printGuests}><Printer size={13} /> Imprimir / PDF</Button>
-          <ImportExcel T={T} label="Importar Excel" hint="Columnas: Nombre, Grupo, GrupoEdad, RSVP, InvitacionEnviada, Restricciones, Notas, Telefono, Evento" onRows={importGuests} />
+          <Button T={T} small variant="outline" onClick={() => setManageGroups(true)}><Users size={13} /> Grupos</Button>
+          {canPickContacts && <Button T={T} small variant="outline" onClick={pickFromPhone}><Contact size={13} /> Desde contactos del cel</Button>}
+          <Button T={T} small variant="outline" onClick={() => vcfRef.current?.click()}><Contact size={13} /> Importar contactos (.vcf)</Button>
+          <input ref={vcfRef} type="file" accept=".vcf,text/vcard,text/x-vcard" className="hidden" onChange={handleVcf} />
+          <ImportExcel T={T} label="Importar Excel" hint="Columnas: Nombre, Grupo, GrupoEdad, RSVP, InvitacionEnviada, Restricciones, Notas, Telefono, Email, Evento. También acepta el CSV de Google Contactos." onRows={importGuests} />
           <Button T={T} onClick={startNew}><Plus size={15} /> Agregar invitado</Button>
         </div>}>
         Invitados
       </SectionTitle>
-      <p className="text-xs mb-4" style={{ color: T.muted }}>Cada invitado es único y puede asignarse a uno o varios eventos — usa el filtro arriba para verlos todos o por separado.</p>
+      <p className="text-xs mb-4" style={{ color: T.muted }}>Cada invitado es único y puede asignarse a uno o varios eventos — usa el filtro arriba para verlos todos o por separado. Para traer contactos: en el iPhone abre Contactos → un contacto → Compartir contacto → Guardar en Archivos, y súbelo con "Importar contactos (.vcf)". En el Mac: app Contactos → selecciona varios → Archivo → Exportar → vCard.</p>
       <div className="flex flex-col gap-2">
         {visible.length === 0 && <EmptyState T={T} text="No hay invitados para este filtro todavía." />}
         {visible.map((g) => {
           const st = S[g.rsvp];
           return (
-            <Card T={T} key={g.id} style={{ padding: "12px 16px" }} onClick={() => setForm(g)} draggable onDragStart={(e) => { e.stopPropagation(); dragRef.current = g.id; }} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.stopPropagation(); setGuests((gs) => reorderById(gs, dragRef.current, g.id)); }}>
+            <Card T={T} key={g.id} style={{ padding: "12px 16px" }} onClick={() => setForm({ email: "", ...g })} draggable onDragStart={(e) => { e.stopPropagation(); dragRef.current = g.id; }} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.stopPropagation(); setGuests((gs) => reorderById(gs, dragRef.current, g.id)); }}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <GripVertical size={13} color={T.muted} style={{ cursor: "grab" }} />
                   <div>
                     <div className="text-sm font-medium">{g.name}</div>
                     <div className="text-xs mt-0.5 flex items-center gap-1.5 flex-wrap" style={{ color: T.muted }}>
-                      {g.group} · {g.ageGroup} · {g.inviteSent ? "Invitación enviada" : "Sin enviar"}
+                      {g.group || "Sin grupo"} · {g.ageGroup} · {g.inviteSent ? "Invitación enviada" : "Sin enviar"}
+                      {g.email && <span className="flex items-center gap-1"><Mail size={11} />{g.email}</span>}
+                      {g.phone && <span className="flex items-center gap-1"><Phone size={11} />{g.phone}</span>}
                       {g.eventIds.map((id) => <span key={id} className="px-1.5 py-0.5 rounded" style={{ background: T.cardAlt }}>{events.find((e) => e.id === id)?.name}</span>)}
                     </div>
                   </div>
@@ -836,10 +913,11 @@ function Guests({ T, guests, setGuests, events, activeEvent, groups, setGroups }
           <div className="grid grid-cols-2 gap-4">
             <Field T={T} label="Nombre"><input style={inputStyle(T)} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} autoFocus /></Field>
             <Field T={T} label="Grupo de edad"><select style={inputStyle(T)} value={form.ageGroup} onChange={(e) => setForm({ ...form, ageGroup: e.target.value })}><option>Adulto</option><option>Niño</option></select></Field>
-            <Field T={T} label="Grupo asignado"><select style={inputStyle(T)} value={form.group} onChange={(e) => setForm({ ...form, group: e.target.value })}>{groups.map((gr) => <option key={gr}>{gr}</option>)}</select></Field>
+            <Field T={T} label="Grupo asignado"><select style={inputStyle(T)} value={form.group} onChange={(e) => setForm({ ...form, group: e.target.value })}><option value="">Sin grupo</option>{groups.map((gr) => <option key={gr}>{gr}</option>)}</select></Field>
             <Field T={T} label="RSVP"><select style={inputStyle(T)} value={form.rsvp} onChange={(e) => setForm({ ...form, rsvp: e.target.value })}><option value="pending">Sin responder</option><option value="attending">Confirma</option><option value="declined">No asiste</option></select></Field>
-            <Field T={T} label="Teléfono"><input style={inputStyle(T)} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
-            <div className="flex items-center gap-3 mt-5"><Toggle T={T} checked={form.inviteSent} onChange={(v) => setForm({ ...form, inviteSent: v })} /><span className="text-sm">Invitación enviada</span></div>
+            <Field T={T} label="Teléfono"><input type="tel" style={inputStyle(T)} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
+            <Field T={T} label="Email"><input type="email" style={inputStyle(T)} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+            <div className="col-span-2 flex items-center gap-3"><Toggle T={T} checked={form.inviteSent} onChange={(v) => setForm({ ...form, inviteSent: v })} /><span className="text-sm">Invitación enviada</span></div>
             <div className="col-span-2">
               <Field T={T} label="Asignado a evento(s) — puede ser uno o varios">
                 <div className="flex gap-2 mt-1">
@@ -856,7 +934,7 @@ function Guests({ T, guests, setGuests, events, activeEvent, groups, setGroups }
             <div className="col-span-2"><Field T={T} label="Notas"><textarea style={{ ...inputStyle(T), width: "100%", minHeight: 60 }} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field></div>
             <div className="col-span-2 flex gap-2 items-center pt-2" style={{ borderTop: `1px solid ${T.line}` }}>
               <input placeholder="Nuevo grupo (ej. Colegio)" style={{ ...inputStyle(T), flex: 1 }} value={newGroup} onChange={(e) => setNewGroup(e.target.value)} />
-              <Button T={T} small variant="outline" onClick={() => { if (newGroup.trim()) { setGroups((g) => [...g, newGroup]); setNewGroup(""); } }}><Plus size={13} /> Agregar grupo</Button>
+              <Button T={T} small variant="outline" onClick={addGroup}><Plus size={13} /> Agregar grupo</Button>
             </div>
           </div>
           <div className="flex gap-2 mt-6 justify-end">
@@ -865,6 +943,397 @@ function Guests({ T, guests, setGuests, events, activeEvent, groups, setGroups }
           </div>
         </Modal>
       )}
+
+      {manageGroups && (
+        <Modal T={T} title="Grupos de invitados" onClose={() => setManageGroups(false)}>
+          <p className="text-xs mb-3" style={{ color: T.muted }}>Cambia el nombre directo en el campo. Al borrar un grupo, sus invitados no se borran: quedan "Sin grupo".</p>
+          <div className="flex flex-col gap-2">
+            {groups.length === 0 && <EmptyState T={T} text="No hay grupos." />}
+            {groups.map((gr) => (
+              <div key={gr} className="flex items-center gap-2">
+                <input defaultValue={gr} style={{ ...inputStyle(T), flex: 1 }} onBlur={(e) => { const v = e.target.value.trim(); if (!v || (v !== gr && groups.includes(v))) e.target.value = gr; else renameGroup(gr, v); }} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} />
+                <span className="text-xs w-20 text-right" style={{ color: T.muted }}>{guests.filter((g) => g.group === gr).length} invitados</span>
+                <button onClick={() => deleteGroup(gr)} title="Borrar grupo"><Trash2 size={15} color={T.alert} /></button>
+              </div>
+            ))}
+            <div className="flex gap-2 items-center pt-3 mt-1" style={{ borderTop: `1px solid ${T.line}` }}>
+              <input placeholder="Nuevo grupo (ej. Colegio)" style={{ ...inputStyle(T), flex: 1 }} value={newGroup} onChange={(e) => setNewGroup(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addGroup()} />
+              <Button T={T} small variant="outline" onClick={addGroup}><Plus size={13} /> Agregar</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {contacts && (
+        <Modal T={T} title={`Importar contactos (${contacts.list.length})`} onClose={() => setContacts(null)}>
+          <div className="flex gap-2 mb-3 flex-wrap items-center">
+            <input placeholder="Buscar…" style={{ ...inputStyle(T), flex: 1, minWidth: 140 }} value={contacts.query} onChange={(e) => setContacts({ ...contacts, query: e.target.value })} />
+            <select style={inputStyle(T)} value={contacts.group} onChange={(e) => setContacts({ ...contacts, group: e.target.value })}><option value="">Sin grupo</option>{groups.map((gr) => <option key={gr}>{gr}</option>)}</select>
+          </div>
+          <div className="flex gap-3 text-xs mb-2" style={{ color: T.primaryDark }}>
+            <button onClick={() => setContacts({ ...contacts, selected: new Set([...contacts.selected, ...shownContacts.map((c) => c.i)]) })}>Marcar visibles</button>
+            <button onClick={() => setContacts({ ...contacts, selected: new Set() })}>Desmarcar todos</button>
+          </div>
+          <div className="flex flex-col gap-1 overflow-auto" style={{ maxHeight: 360 }}>
+            {shownContacts.map((c) => (
+              <label key={c.i} className="flex items-center gap-3 px-2 py-1.5 rounded-lg text-sm cursor-pointer" style={{ background: contacts.selected.has(c.i) ? T.cardAlt : "transparent" }}>
+                <input type="checkbox" checked={contacts.selected.has(c.i)} onChange={() => { const s = new Set(contacts.selected); s.has(c.i) ? s.delete(c.i) : s.add(c.i); setContacts({ ...contacts, selected: s }); }} />
+                <span className="flex-1">{c.name}</span>
+                <span className="text-xs" style={{ color: T.muted }}>{c.email || c.phone}</span>
+              </label>
+            ))}
+          </div>
+          <p className="text-xs mt-2" style={{ color: T.muted }}>Los contactos que ya están como invitados (mismo nombre) no aparecen.</p>
+          <div className="flex gap-2 mt-4 justify-end">
+            <Button T={T} variant="outline" onClick={() => setContacts(null)}>Cancelar</Button>
+            <Button T={T} onClick={addSelectedContacts}><Check size={14} /> Agregar {contacts.selected.size} invitado(s)</Button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ============================== Lugares / centros de eventos ============================== */
+const VENUE_TYPES = ["Centro de eventos", "Hacienda / Fundo", "Viña", "Salón", "Hotel", "Casa / Jardín", "Restaurante", "Playa", "Otro"];
+const VENUE_STATUS = ["Por visitar", "Visitado", "Favorito", "Descartado", "Reservado"];
+const VENUE_VIBES = ["Rústico", "Campestre", "Elegante", "Boho", "Moderno", "Clásico", "Industrial", "Minimalista", "Romántico", "Playero", "Jardín / Bosque"];
+const VENUE_SERVICES = ["Banquetera / Catering", "DJ / Música", "Barra / Bebidas", "Decoración", "Flores", "Mobiliario", "Iluminación", "Coordinador(a) del día", "Fotografía", "Torta", "Estacionamiento", "Alojamiento", "Ceremonia en el lugar"];
+const VENUE_ASPECTS = ["Belleza del lugar", "Vibe / decoración", "Ubicación y acceso", "Capacidad y espacios", "Relación precio-calidad", "Comida / banquetera", "Atención y flexibilidad", "Plan lluvia / clima", "Estacionamiento y logística", "Fotos (luz y rincones)"];
+const MAX_VENUE_PHOTOS = 8;
+
+function venueAvg(v, who) {
+  const vals = VENUE_ASPECTS.map((a) => Number(v.ratings?.[a]?.[who])).filter((n) => n > 0);
+  return vals.length ? vals.reduce((s, n) => s + n, 0) / vals.length : null;
+}
+function venueCombined(v) {
+  const vals = [venueAvg(v, "a"), venueAvg(v, "b")].filter((n) => n !== null);
+  return vals.length ? vals.reduce((s, n) => s + n, 0) / vals.length : null;
+}
+function venueTotal(v, headcount) {
+  const base = Number(v.priceBase || 0), pp = Number(v.pricePerPerson || 0);
+  return base || pp ? base + pp * headcount : null;
+}
+const fmtScore = (n) => (n === null || n === undefined ? "—" : n.toFixed(1));
+
+function ScoreSelect({ T, value, onChange }) {
+  return (
+    <select style={{ ...inputStyle(T), padding: "4px 6px", width: 64 }} value={value || ""} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : "")}>
+      <option value="">—</option>
+      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n}</option>)}
+    </select>
+  );
+}
+function Chip({ T, active, children, onClick }) {
+  return (
+    <button onClick={onClick} className="px-3 py-1.5 rounded-full text-xs"
+      style={active ? { background: T.secondary, color: "#fff" } : { background: T.cardAlt, color: T.muted, border: `1px solid ${T.line}` }}>{children}</button>
+  );
+}
+
+function Venues({ T, venues, setVenues, events, guests, couple, setSuppliers }) {
+  const [form, setForm] = useState(null);
+  const [statusFilter, setStatusFilter] = useState("Todos");
+  const [sortBy, setSortBy] = useState("score");
+  const [compareIds, setCompareIds] = useState([]);
+  const [comparing, setComparing] = useState(false);
+  const defaultHeadcount = guests.filter((g) => g.rsvp !== "declined").length || 100;
+  const [headcount, setHeadcount] = useState(defaultHeadcount);
+  const photoRef = useRef(null);
+  const nameA = couple.a || "Novia", nameB = couple.b || "Novio";
+
+  function startNew() {
+    setForm({ id: uid(), name: "", type: VENUE_TYPES[0], status: "Por visitar", vibes: [], eventId: "", address: "", contact: "", phone: "", email: "", website: "", visitDate: "",
+      capacityMin: "", capacityMax: "", space: "Ambos", rainPlan: false, parking: "", curfew: "", currency: "CLP", priceBase: "", pricePerPerson: "", deposit: "", priceNotes: "",
+      services: [], exclusiveSuppliers: false, photos: [], ratings: {}, overall: { a: "", b: "" }, pros: "", cons: "", notes: "" });
+  }
+  function save() { if (!form.name.trim()) return; setVenues((vs) => (vs.some((x) => x.id === form.id) ? vs.map((x) => (x.id === form.id ? form : x)) : [...vs, form])); setForm(null); }
+  function remove(id) { if (!window.confirm("¿Borrar este lugar?")) return; setVenues((vs) => vs.filter((x) => x.id !== id)); setCompareIds((c) => c.filter((x) => x !== id)); setForm(null); }
+  function toggleIn(key, val) { setForm((f) => ({ ...f, [key]: f[key].includes(val) ? f[key].filter((x) => x !== val) : [...f[key], val] })); }
+  function setRating(aspect, who, val) { setForm((f) => ({ ...f, ratings: { ...f.ratings, [aspect]: { ...(f.ratings[aspect] || {}), [who]: val } } })); }
+  async function addPhotos(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    const room = MAX_VENUE_PHOTOS - form.photos.length;
+    if (files.length > room) alert(`Máximo ${MAX_VENUE_PHOTOS} fotos por lugar (para que la app siga rápida). Se agregarán ${Math.max(room, 0)}.`);
+    try {
+      const urls = await Promise.all(files.slice(0, Math.max(room, 0)).map((f) => compressImage(f, 1000, 0.72)));
+      setForm((f) => ({ ...f, photos: [...f.photos, ...urls] }));
+    } catch (err) { alert("No se pudo procesar alguna imagen."); }
+  }
+  function toSupplier(v) {
+    const total = venueTotal(v, headcount);
+    setSuppliers((s) => [...s, { id: uid(), company: v.name, category: "Lugar", cost: total ?? "", phone: v.phone, email: v.email, address: v.address, paymentStatus: "No pagado", depositPaid: false, notes: `Agregado desde Lugares${total ? ` (total estimado para ${headcount} invitados)` : ""}.` }]);
+    alert(`"${v.name}" se agregó a Proveedores (categoría Lugar).`);
+  }
+  function toggleCompare(id) { setCompareIds((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id])); }
+
+  const statusColor = (st) => ({ Favorito: T.primary, Reservado: T.secondaryDark, Descartado: T.muted, Visitado: T.secondary }[st] || T.primaryDark);
+  const sorted = venues
+    .filter((v) => statusFilter === "Todos" || v.status === statusFilter)
+    .slice()
+    .sort((x, y) => {
+      if (sortBy === "score") return (venueCombined(y) ?? -1) - (venueCombined(x) ?? -1);
+      if (sortBy === "price") return (venueTotal(x, headcount) ?? Infinity) - (venueTotal(y, headcount) ?? Infinity);
+      if (sortBy === "capacity") return Number(y.capacityMax || 0) - Number(x.capacityMax || 0);
+      return x.name.localeCompare(y.name);
+    });
+  const compared = compareIds.map((id) => venues.find((v) => v.id === id)).filter(Boolean);
+
+  return (
+    <div>
+      <SectionTitle T={T} action={
+        <div className="flex gap-2">
+          {compared.length >= 2 && <Button T={T} variant="outline" onClick={() => setComparing(true)}><Scale size={14} /> Comparar ({compared.length})</Button>}
+          <Button T={T} onClick={startNew}><Plus size={15} /> Agregar lugar</Button>
+        </div>}>
+        Lugares
+      </SectionTitle>
+      <p className="text-xs mb-4" style={{ color: T.muted }}>Evalúen cada centro de eventos por separado ({nameA} y {nameB}, de 1 a 10), guarden fotos, precios y qué incluye. Marca "Comparar" en 2 o más para verlos lado a lado.</p>
+
+      <div className="flex gap-2 mb-3 flex-wrap items-center">
+        {["Todos", ...VENUE_STATUS].map((st) => <Chip key={st} T={T} active={statusFilter === st} onClick={() => setStatusFilter(st)}>{st}</Chip>)}
+      </div>
+      <div className="flex gap-4 mb-5 flex-wrap items-center text-sm">
+        <label className="flex items-center gap-2"><span style={{ color: T.muted }}>Ordenar por</span>
+          <select style={inputStyle(T)} value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+            <option value="score">Mejor nota</option><option value="price">Menor precio</option><option value="capacity">Mayor capacidad</option><option value="name">Nombre</option>
+          </select>
+        </label>
+        <label className="flex items-center gap-2"><span style={{ color: T.muted }}>Invitados estimados (para calcular totales)</span>
+          <input type="number" min="0" style={{ ...inputStyle(T), width: 90 }} value={headcount} onChange={(e) => setHeadcount(Number(e.target.value) || 0)} />
+        </label>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {sorted.length === 0 && <div className="col-span-full"><EmptyState T={T} text="Sin lugares todavía. Agrega el primero que estén evaluando." /></div>}
+        {sorted.map((v) => {
+          const total = venueTotal(v, headcount);
+          const tooSmall = v.capacityMax && Number(v.capacityMax) < headcount;
+          return (
+            <Card T={T} key={v.id} style={{ padding: 0, overflow: "hidden", opacity: v.status === "Descartado" ? 0.6 : 1 }} onClick={() => setForm({ ...v })}>
+              <div className="h-40 flex items-center justify-center relative" style={{ background: T.cardAlt }}>
+                {v.photos?.[0] ? <img src={v.photos[0]} alt="" className="w-full h-full object-cover" /> : <Building2 size={32} color={T.muted} />}
+                <span className="absolute top-2 left-2 text-xs px-2 py-1 rounded-full" style={{ background: statusColor(v.status), color: "#fff" }}>{v.status}</span>
+                {v.photos?.length > 1 && <span className="absolute bottom-2 right-2 text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(0,0,0,0.55)", color: "#fff" }}>{v.photos.length} fotos</span>}
+                <label onClick={(e) => e.stopPropagation()} className="absolute top-2 right-2 text-xs px-2 py-1 rounded-full flex items-center gap-1 cursor-pointer" style={{ background: compareIds.includes(v.id) ? T.primary : "rgba(255,255,255,0.9)", color: compareIds.includes(v.id) ? "#fff" : "#3B2A20" }}>
+                  <input type="checkbox" className="hidden" checked={compareIds.includes(v.id)} onChange={() => toggleCompare(v.id)} /><Scale size={11} /> Comparar
+                </label>
+              </div>
+              <div className="p-4">
+                <div className="text-base font-medium">{v.name}</div>
+                <div className="text-xs mt-0.5" style={{ color: T.muted }}>{v.type}{v.address && ` · ${v.address}`}</div>
+                <div className="flex gap-2 mt-3 text-xs flex-wrap">
+                  <span className="px-2 py-1 rounded-lg flex items-center gap-1" style={{ background: T.cardAlt }}><Star size={11} color={T.primary} /> {nameA} {fmtScore(venueAvg(v, "a"))}</span>
+                  <span className="px-2 py-1 rounded-lg flex items-center gap-1" style={{ background: T.cardAlt }}><Star size={11} color={T.secondary} /> {nameB} {fmtScore(venueAvg(v, "b"))}</span>
+                  <span className="px-2 py-1 rounded-lg font-medium" style={{ background: T.soft, color: T.text }}>Pareja {fmtScore(venueCombined(v))}</span>
+                </div>
+                <div className="flex justify-between mt-3 text-xs" style={{ color: T.muted }}>
+                  <span style={{ color: tooSmall ? T.alert : T.muted }}><Users size={11} className="inline mr-1" />{v.capacityMin || v.capacityMax ? `${v.capacityMin || "?"}–${v.capacityMax || "?"} pers.` : "Capacidad —"}{tooSmall && " (no caben)"}</span>
+                  <span className="font-medium" style={{ color: T.text }}>{total !== null ? fmtMoney(total, v.currency) : "Precio —"}</span>
+                </div>
+                {(v.vibes?.length > 0 || v.services?.length > 0) && (
+                  <div className="flex gap-1 mt-3 flex-wrap">
+                    {v.vibes.map((x) => <span key={x} className="text-xs px-1.5 py-0.5 rounded" style={{ background: T.soft, color: T.text }}>{x}</span>)}
+                    {v.services?.length > 0 && <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: T.cardAlt, color: T.muted }}>Incluye {v.services.length} servicio(s)</span>}
+                  </div>
+                )}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+
+      {form && (
+        <Modal T={T} title={venues.some((x) => x.id === form.id) ? form.name || "Editar lugar" : "Nuevo lugar"} onClose={() => setForm(null)}>
+          <div className="flex flex-col gap-6">
+            <section className="grid grid-cols-2 gap-4">
+              <div className="col-span-2"><Field T={T} label="Nombre del lugar"><input style={{ ...inputStyle(T), width: "100%" }} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} autoFocus /></Field></div>
+              <Field T={T} label="Tipo de lugar"><select style={inputStyle(T)} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>{VENUE_TYPES.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field T={T} label="Estado"><select style={inputStyle(T)} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{VENUE_STATUS.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field T={T} label="Para qué evento"><select style={inputStyle(T)} value={form.eventId} onChange={(e) => setForm({ ...form, eventId: e.target.value })}><option value="">Cualquiera / por definir</option>{events.map((ev) => <option key={ev.id} value={ev.id}>{ev.name}</option>)}</select></Field>
+              <Field T={T} label="Fecha de visita"><input type="date" style={inputStyle(T)} value={form.visitDate} onChange={(e) => setForm({ ...form, visitDate: e.target.value })} /></Field>
+            </section>
+
+            <section>
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="text-sm font-medium">Fotos ({form.photos.length}/{MAX_VENUE_PHOTOS})</h3>
+                {form.photos.length < MAX_VENUE_PHOTOS && <Button T={T} small variant="outline" onClick={() => photoRef.current?.click()}><Camera size={13} /> Agregar fotos</Button>}
+                <input ref={photoRef} type="file" accept="image/*" multiple className="hidden" onChange={addPhotos} />
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                {form.photos.length === 0 && <span className="text-xs" style={{ color: T.muted }}>Sin fotos. La primera será la portada.</span>}
+                {form.photos.map((src, i) => (
+                  <div key={i} className="relative w-28 h-24 rounded-lg overflow-hidden" style={{ border: `1px solid ${T.line}` }}>
+                    <a href={src} target="_blank" rel="noreferrer"><img src={src} alt="" className="w-full h-full object-cover" /></a>
+                    <button onClick={() => setForm((f) => ({ ...f, photos: f.photos.filter((_, j) => j !== i) }))} className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.55)" }}><X size={11} color="#fff" /></button>
+                    {i > 0 && <button onClick={() => setForm((f) => ({ ...f, photos: [f.photos[i], ...f.photos.filter((_, j) => j !== i)] }))} className="absolute bottom-1 left-1 text-[10px] px-1.5 rounded" style={{ background: "rgba(0,0,0,0.55)", color: "#fff" }}>Portada</button>}
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section>
+              <h3 className="text-sm font-medium mb-2">Evaluación (1 a 10)</h3>
+              <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${T.line}` }}>
+                <div className="grid text-xs font-medium px-3 py-2" style={{ gridTemplateColumns: "1fr 72px 72px", background: T.cardAlt, color: T.muted }}><span>Aspecto</span><span>{nameA}</span><span>{nameB}</span></div>
+                {VENUE_ASPECTS.map((a) => (
+                  <div key={a} className="grid items-center px-3 py-1.5 text-sm" style={{ gridTemplateColumns: "1fr 72px 72px", borderTop: `1px solid ${T.line}` }}>
+                    <span>{a}</span>
+                    <ScoreSelect T={T} value={form.ratings[a]?.a} onChange={(n) => setRating(a, "a", n)} />
+                    <ScoreSelect T={T} value={form.ratings[a]?.b} onChange={(n) => setRating(a, "b", n)} />
+                  </div>
+                ))}
+                <div className="grid items-center px-3 py-2 text-sm font-medium" style={{ gridTemplateColumns: "1fr 72px 72px", borderTop: `1px solid ${T.line}`, background: T.cardAlt }}>
+                  <span>Promedio (pareja: {fmtScore(venueCombined(form))})</span><span>{fmtScore(venueAvg(form, "a"))}</span><span>{fmtScore(venueAvg(form, "b"))}</span>
+                </div>
+                <div className="grid items-center px-3 py-1.5 text-sm" style={{ gridTemplateColumns: "1fr 72px 72px", borderTop: `1px solid ${T.line}` }}>
+                  <span>Nota "de guata" (sensación general)</span>
+                  <ScoreSelect T={T} value={form.overall?.a} onChange={(n) => setForm((f) => ({ ...f, overall: { ...f.overall, a: n } }))} />
+                  <ScoreSelect T={T} value={form.overall?.b} onChange={(n) => setForm((f) => ({ ...f, overall: { ...f.overall, b: n } }))} />
+                </div>
+              </div>
+            </section>
+
+            <section className="grid grid-cols-2 gap-4">
+              <h3 className="col-span-2 text-sm font-medium">Precio</h3>
+              <Field T={T} label="Moneda"><select style={inputStyle(T)} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}><option>CLP</option><option>UF</option></select></Field>
+              <Field T={T} label="Arriendo / precio fijo"><input type="number" style={inputStyle(T)} value={form.priceBase} onChange={(e) => setForm({ ...form, priceBase: e.target.value })} /></Field>
+              <Field T={T} label="Precio por persona"><input type="number" style={inputStyle(T)} value={form.pricePerPerson} onChange={(e) => setForm({ ...form, pricePerPerson: e.target.value })} /></Field>
+              <Field T={T} label="Reserva / pie"><input type="number" style={inputStyle(T)} value={form.deposit} onChange={(e) => setForm({ ...form, deposit: e.target.value })} /></Field>
+              <div className="col-span-2 text-sm px-3 py-2 rounded-lg" style={{ background: T.cardAlt }}>Total estimado para {headcount} invitados: <b>{venueTotal(form, headcount) !== null ? fmtMoney(venueTotal(form, headcount), form.currency) : "—"}</b></div>
+              <div className="col-span-2"><Field T={T} label="Qué incluye el precio / condiciones"><textarea style={{ ...inputStyle(T), width: "100%", minHeight: 50 }} value={form.priceNotes} onChange={(e) => setForm({ ...form, priceNotes: e.target.value })} /></Field></div>
+            </section>
+
+            <section>
+              <h3 className="text-sm font-medium mb-2">Servicios incluidos</h3>
+              <div className="flex gap-2 flex-wrap">{VENUE_SERVICES.map((x) => <Chip key={x} T={T} active={form.services.includes(x)} onClick={() => toggleIn("services", x)}>{form.services.includes(x) && "✓ "}{x}</Chip>)}</div>
+              <div className="flex items-center gap-3 mt-3"><Toggle T={T} checked={form.exclusiveSuppliers} onChange={(v) => setForm({ ...form, exclusiveSuppliers: v })} /><span className="text-sm">Obliga a usar sus proveedores (no se puede traer externos)</span></div>
+            </section>
+
+            <section>
+              <h3 className="text-sm font-medium mb-2">Vibe de la decoración</h3>
+              <div className="flex gap-2 flex-wrap">{VENUE_VIBES.map((x) => <Chip key={x} T={T} active={form.vibes.includes(x)} onClick={() => toggleIn("vibes", x)}>{x}</Chip>)}</div>
+            </section>
+
+            <section className="grid grid-cols-2 gap-4">
+              <h3 className="col-span-2 text-sm font-medium">Espacio y logística</h3>
+              <Field T={T} label="Capacidad mínima (personas)"><input type="number" style={inputStyle(T)} value={form.capacityMin} onChange={(e) => setForm({ ...form, capacityMin: e.target.value })} /></Field>
+              <Field T={T} label="Capacidad máxima (personas)"><input type="number" style={inputStyle(T)} value={form.capacityMax} onChange={(e) => setForm({ ...form, capacityMax: e.target.value })} /></Field>
+              <Field T={T} label="Espacios"><select style={inputStyle(T)} value={form.space} onChange={(e) => setForm({ ...form, space: e.target.value })}><option>Interior</option><option>Exterior</option><option>Ambos</option></select></Field>
+              <Field T={T} label="Hora de término / toque de queda"><input style={inputStyle(T)} placeholder="Ej. 04:00" value={form.curfew} onChange={(e) => setForm({ ...form, curfew: e.target.value })} /></Field>
+              <Field T={T} label="Estacionamiento (cupos)"><input style={inputStyle(T)} value={form.parking} onChange={(e) => setForm({ ...form, parking: e.target.value })} /></Field>
+              <div className="flex items-center gap-3 mt-5"><Toggle T={T} checked={form.rainPlan} onChange={(v) => setForm({ ...form, rainPlan: v })} /><span className="text-sm">Tiene plan lluvia</span></div>
+            </section>
+
+            <section className="grid grid-cols-2 gap-4">
+              <h3 className="col-span-2 text-sm font-medium">Contacto</h3>
+              <div className="col-span-2"><Field T={T} label="Dirección / comuna"><input style={{ ...inputStyle(T), width: "100%" }} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></Field></div>
+              {form.address && <a href={mapsLink(form.address)} target="_blank" rel="noreferrer" className="col-span-2 text-xs flex items-center gap-1" style={{ color: T.primaryDark }}><MapPin size={12} /> Ver en Google Maps</a>}
+              <Field T={T} label="Persona de contacto"><input style={inputStyle(T)} value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} /></Field>
+              <Field T={T} label="Teléfono"><input type="tel" style={inputStyle(T)} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
+              <Field T={T} label="Email"><input type="email" style={inputStyle(T)} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+              <Field T={T} label="Web / Instagram"><input style={inputStyle(T)} value={form.website} onChange={(e) => setForm({ ...form, website: e.target.value })} /></Field>
+            </section>
+
+            <section className="grid grid-cols-2 gap-4">
+              <Field T={T} label="👍 Lo mejor"><textarea style={{ ...inputStyle(T), minHeight: 60 }} value={form.pros} onChange={(e) => setForm({ ...form, pros: e.target.value })} /></Field>
+              <Field T={T} label="👎 Lo que no nos convence"><textarea style={{ ...inputStyle(T), minHeight: 60 }} value={form.cons} onChange={(e) => setForm({ ...form, cons: e.target.value })} /></Field>
+              <div className="col-span-2"><Field T={T} label="Notas"><textarea style={{ ...inputStyle(T), width: "100%", minHeight: 50 }} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field></div>
+            </section>
+          </div>
+          <div className="flex gap-2 mt-6 justify-end flex-wrap">
+            {venues.some((x) => x.id === form.id) && <Button T={T} variant="outline" onClick={() => remove(form.id)}><Trash2 size={13} /> Eliminar</Button>}
+            {venues.some((x) => x.id === form.id) && <Button T={T} variant="outline" onClick={() => toSupplier(form)}><Briefcase size={13} /> Pasar a Proveedores</Button>}
+            <Button T={T} variant="outline" onClick={() => setForm(null)}>Cancelar</Button>
+            <Button T={T} onClick={save}><Check size={14} /> Guardar</Button>
+          </div>
+        </Modal>
+      )}
+
+      {comparing && compared.length >= 2 && <VenueCompare T={T} venues={compared} headcount={headcount} nameA={nameA} nameB={nameB} onClose={() => setComparing(false)} onRemove={toggleCompare} />}
+    </div>
+  );
+}
+
+function VenueCompare({ T, venues, headcount, nameA, nameB, onClose, onRemove }) {
+  // Devuelve el id del mejor lugar según una métrica (para destacarlo), ignorando vacíos y empates totales.
+  function best(fn, lowest = false) {
+    const vals = venues.map((v) => ({ id: v.id, n: fn(v) })).filter((x) => x.n !== null && x.n !== undefined && x.n !== "" && !Number.isNaN(Number(x.n)));
+    if (vals.length < 2) return null;
+    const target = lowest ? Math.min(...vals.map((x) => Number(x.n))) : Math.max(...vals.map((x) => Number(x.n)));
+    const winners = vals.filter((x) => Number(x.n) === target);
+    return winners.length === vals.length ? null : new Set(winners.map((x) => x.id));
+  }
+  const yesNo = (b) => (b ? "✓" : "—");
+  const rows = [
+    { group: "General" },
+    { label: "Tipo", get: (v) => v.type },
+    { label: "Estado", get: (v) => v.status },
+    { label: "Vibe", get: (v) => v.vibes?.join(", ") || "—" },
+    { group: "Notas" },
+    { label: `Promedio ${nameA}`, get: (v) => fmtScore(venueAvg(v, "a")), best: best((v) => venueAvg(v, "a")) },
+    { label: `Promedio ${nameB}`, get: (v) => fmtScore(venueAvg(v, "b")), best: best((v) => venueAvg(v, "b")) },
+    { label: "Promedio pareja", get: (v) => fmtScore(venueCombined(v)), best: best(venueCombined), strong: true },
+    { label: "Nota de guata", get: (v) => `${v.overall?.a || "—"} / ${v.overall?.b || "—"}` },
+    ...VENUE_ASPECTS.map((a) => ({ label: a, get: (v) => `${v.ratings?.[a]?.a || "—"} / ${v.ratings?.[a]?.b || "—"}`, best: best((v) => { const s = [v.ratings?.[a]?.a, v.ratings?.[a]?.b].filter((n) => n > 0); return s.length ? s.reduce((x, y) => x + y, 0) / s.length : null; }), small: true })),
+    { group: "Precio" },
+    { label: "Arriendo / fijo", get: (v) => (v.priceBase ? fmtMoney(v.priceBase, v.currency) : "—") },
+    { label: "Por persona", get: (v) => (v.pricePerPerson ? fmtMoney(v.pricePerPerson, v.currency) : "—") },
+    { label: `Total estimado (${headcount} inv.)`, get: (v) => { const t = venueTotal(v, headcount); return t !== null ? fmtMoney(t, v.currency) : "—"; }, best: venues.every((v) => v.currency === venues[0].currency) ? best((v) => venueTotal(v, headcount), true) : null, strong: true },
+    { label: "Reserva / pie", get: (v) => (v.deposit ? fmtMoney(v.deposit, v.currency) : "—") },
+    { label: "Qué incluye", get: (v) => v.priceNotes || "—", small: true },
+    { group: "Espacio y logística" },
+    { label: "Capacidad", get: (v) => `${v.capacityMin || "?"}–${v.capacityMax || "?"}`, best: best((v) => v.capacityMax) },
+    { label: "Espacios", get: (v) => v.space },
+    { label: "Plan lluvia", get: (v) => yesNo(v.rainPlan) },
+    { label: "Estacionamiento", get: (v) => v.parking || "—" },
+    { label: "Hora de término", get: (v) => v.curfew || "—" },
+    { label: "Proveedores obligatorios", get: (v) => (v.exclusiveSuppliers ? "Sí" : "No") },
+    { group: "Servicios incluidos" },
+    { label: "Cantidad", get: (v) => v.services?.length || 0, best: best((v) => v.services?.length || 0) },
+    ...VENUE_SERVICES.map((s) => ({ label: s, get: (v) => yesNo(v.services?.includes(s)), small: true })),
+    { group: "Comentarios" },
+    { label: "Lo mejor", get: (v) => v.pros || "—", small: true },
+    { label: "Lo que no convence", get: (v) => v.cons || "—", small: true },
+  ];
+  const cols = `180px repeat(${venues.length}, minmax(160px, 1fr))`;
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-auto p-4 md:p-8" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-6xl rounded-2xl p-6" style={{ background: T.card }}>
+        <div className="flex items-center justify-between mb-5">
+          <h2 style={{ fontFamily: "Georgia, serif" }} className="text-xl">Comparar lugares</h2>
+          <button onClick={onClose}><X size={18} color={T.muted} /></button>
+        </div>
+        <p className="text-xs mb-3" style={{ color: T.muted }}>Las notas se muestran como {nameA} / {nameB}. Lo destacado es el mejor en esa fila.</p>
+        <div className="overflow-x-auto">
+          <div className="grid gap-x-3 min-w-fit" style={{ gridTemplateColumns: cols }}>
+            <div />
+            {venues.map((v) => (
+              <div key={v.id} className="pb-3">
+                <div className="h-28 rounded-lg overflow-hidden flex items-center justify-center mb-2" style={{ background: T.cardAlt }}>
+                  {v.photos?.[0] ? <img src={v.photos[0]} alt="" className="w-full h-full object-cover" /> : <Building2 size={24} color={T.muted} />}
+                </div>
+                <div className="flex items-start justify-between gap-1">
+                  <span className="text-sm font-medium">{v.name}</span>
+                  <button onClick={() => onRemove(v.id)} title="Quitar de la comparación"><X size={13} color={T.muted} /></button>
+                </div>
+              </div>
+            ))}
+            {rows.map((r, i) => r.group ? (
+              <div key={i} className="text-xs font-medium uppercase tracking-wide pt-4 pb-1" style={{ gridColumn: "1 / -1", color: T.primaryDark, borderBottom: `1px solid ${T.line}` }}>{r.group}</div>
+            ) : (
+              <React.Fragment key={i}>
+                <div className={`py-1.5 ${r.small ? "text-xs" : "text-sm"}`} style={{ color: T.muted, borderBottom: `1px solid ${T.line}` }}>{r.label}</div>
+                {venues.map((v) => {
+                  const win = r.best?.has(v.id);
+                  return <div key={v.id} className={`py-1.5 px-2 ${r.small ? "text-xs" : "text-sm"} ${r.strong || win ? "font-medium" : ""}`} style={{ borderBottom: `1px solid ${T.line}`, background: win ? T.soft : "transparent", borderRadius: win ? 6 : 0 }}>{r.get(v)}</div>;
+                })}
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
